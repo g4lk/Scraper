@@ -1,5 +1,7 @@
-
-
+https://www.elnacional.cat/es
+https://www.elmundo.es/
+https://elpais.com/
+https://www.lavanguardia.com/
 https://www.elperiodico.com/es/
 https://www.elconfidencial.com/
 https://www.eldiario.es/
@@ -10,7 +12,7 @@ https://www.elplural.com/
 https://www.lainformacion.com/
 https://www.larazon.es/
 https://www.esdiario.com/
-https://www.libertaddigital.com/
+http://www.libertaddigital.com/
 https://okdiario.com/
 https://www.periodistadigital.com/
 https://www.abc.es/
@@ -23,3 +25,6 @@ https://www.lasprovincias.es/
 https://www.diariosur.es/
 https://www.elnortedecastilla.es/
 https://www.lavozdegalicia.es/
+https://www.lne.es/
+https://www.lasexta.com/
+http://cadenaser.com/
