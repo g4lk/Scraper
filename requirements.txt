@@ -1,7 +1,12 @@
-# Módulo para recolección de titulo y noticia
+﻿# Módulo para recolección de titulo y noticia
 
 newspaper3k
 
 # Módulo de conexión con mongo
 
 pymongo
+
+# Modulo parseo
+
+beautifulsoup4
+
