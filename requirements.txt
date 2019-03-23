@@ -1,8 +1,4 @@
-﻿# Módulo para recolección de titulo y noticia
-
-newspaper3k
-
-# Módulo de conexión con mongo
+﻿# Módulo de conexión con mongo
 
 pymongo
 
