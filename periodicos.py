@@ -1,6 +1,7 @@
 from bs4 import BeautifulSoup
 import ssl, urllib,os,re,requests
 from color import Color
+from multiprocessing.pool import ThreadPool
 
 class Noticia():
     ''' Datos necesarios para guardar en bbdd mas score para filtro'''
@@ -100,7 +101,7 @@ class Periodicos():
 
     def __search_title(self,soup):
         ''' Recogemos titulo y eliminamos simbolos raros del final '''
-        title = soup.title.string
+        title = str(soup.title.string)
         busqueda = re.search('[\|\#\[\]\{\}\$-]',title)
         if busqueda:
             end_title = str(title[:busqueda.start()])
@@ -127,8 +128,9 @@ class Periodicos():
             soup = self.__scraper(url)
             news = []
             urlsScrapeadas = set()
-            tagsFiltered = [a for a in soup.find_all('a') if a.get('href')]
-            for a in tagsFiltered:
+            tags_filtrados = [a for a in soup.find_all('a') if a.get('href')]
+
+            for a in tags_filtrados:
                     urlfixed = self.__fix_url(url,str(a.get('href').replace(" ","")))
                     if url in urlfixed and not urlfixed in urlsScrapeadas and any(word.lower() in str(a).lower() for word in words):
                         urlsScrapeadas.add(urlfixed)
@@ -146,9 +148,14 @@ class Periodicos():
                                 news.append(new)
             if len(news) != 0:
                 new = Noticia()
-                for elem in news:
-                    if elem.score > new.score:
-                        new = elem
+                try:
+                    import operator
+                except ImportError:
+                    score_field = lambda x: x.score
+                else:
+                    score_field = operator.attrgetter("score")
+                news.sort(key=score_field, reverse=True)
+                new = news[0]
                 respuesta = str(input(f'[+] ¿Es \'{new.title}\' con url {new.url} la noticia? S/N: '))
                 if respuesta.lower() == 's':
                     end_news.append(new)
