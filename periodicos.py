@@ -1,7 +1,11 @@
 from bs4 import BeautifulSoup
-import ssl, urllib,os,re,requests
+import ssl, urllib,os,re,requests,sys,spacy
+from urllib.parse import urlparse
 from color import Color
-from multiprocessing.pool import ThreadPool
+from collections import Counter
+from config import DB
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn import svm
 
 class Noticia():
     ''' Datos necesarios para guardar en bbdd mas score para filtro'''
@@ -16,6 +20,7 @@ class Noticia():
 class Periodicos():
     def __init__(self):
         self.__colores = Color()
+        self.__db_con = DB()
         self.__periodicos = {   "https://www.elnacional.cat/es":"article-body",
                                 "https://www.elmundo.es/":"ue-l-article__body ue-c-article__body",
                                 "https://elpais.com/":"articulo-cuerpo",
@@ -44,12 +49,19 @@ class Periodicos():
                                 "https://www.lavozdegalicia.es/": "text"
                 }
 
+        self.__results = []
+        
+
+        self.__nlp = spacy.load('es_core_news_md')
+
     def load_newspapers(self):
         ''' Por si se quiere el diccionario de periodico-clase creado '''
+
         return self.__periodicos
 
     def __fix_url(self,url, href):
         ''' Parser de urls '''
+
         getElem = href.find("#")
         if 'http://' in href.lower() or 'https://' in href.lower():
             if getElem != -1:
@@ -71,6 +83,7 @@ class Periodicos():
         ''' Creamos headers y un contexto de ssl para evitar errores o bloqueos
             Luego hacemos una peticion get a la url y devolvemos el objeto bs
         '''
+
         header = {'User-Agent': 'Mozilla/5.0 (Windows NT 6.1; Win64; x64)'}
         if (not os.environ.get('PYTHONHTTPSVERIFY', '') and getattr(ssl, '_create_unverified_context', None)):
             ssl._create_default_https_context = ssl._create_unverified_context
@@ -79,16 +92,17 @@ class Periodicos():
 
     def __search_text(self,soup,css_class):
         ''' Buscamos la clase que contiene la noticia, y cogemos su texto'''
+
         tag = soup.select(f"[class='{css_class}']")
         if tag:
             tag = tag[0]
             ps = tag.find_all('p',recursive=False)
             if ps:
-                result = ''.join([p.text for p in ps])
+                result = ' '.join([p.text for p in ps])
                 return result
             else:
                 ps = tag.find_all('p')
-                result = ''.join([p.text for p in ps])
+                result = ' '.join([p.text for p in ps])
                 return result
 
     def __search_score(self,text,title,words):
@@ -101,7 +115,7 @@ class Periodicos():
 
     def __search_title(self,soup):
         ''' Recogemos titulo y eliminamos simbolos raros del final '''
-        title = str(soup.title.string)
+        title = soup.title.string
         busqueda = re.search('[\|\#\[\]\{\}\$-]',title)
         if busqueda:
             end_title = str(title[:busqueda.start()])
@@ -112,57 +126,159 @@ class Periodicos():
 
     def __select_new(self,news):
         ''' Si no es la noticia que contenga más palabras, escogemos entre las que hemos almacenado'''
+
         for index,new in enumerate(news):
             print(f'\t{self.__colores.BLUE}{index}: {new.title} - {new.url}{self.__colores.END}')
         inp = int(input(f'{self.__colores.BOLD}Selecciona un número de los anteriores o -1 si no quieres ninguno: {self.__colores.END}'))
         return inp
 
-    def search_news(self,words):
+    def __process(self,url,css):
+        ''' Procesamos una noticia a través de su url'''
+
+        soup_new = self.__scraper(url)
+        text = self.__search_text(soup_new, css)
+        title = self.__search_title(soup_new)
+        return (soup_new,text,title)
+
+    def __extract_newspaper(self,url):
+        ''' Extraemos la clave que existe en el diccionario de periodicos de una url '''
+
+        newspaper = urlparse(url)
+        if 'elnacional' in newspaper.netloc or 'elperiodico' in newspaper.netloc:
+            return f'{newspaper.scheme}://{newspaper.netloc}/es'
+        else:
+            return f'{newspaper.scheme}://{newspaper.netloc}/'
+
+
+    def __get_words(self,doc):
+        '''Cogemos verbos, sustantivos y demás palabras que tengan relevancia
+         y escogemos de estas las más repetidas en el texto.'''
+
+        words = [token.text for token in doc if token.is_stop != True and token.is_punct != True and token.pos_ != "CONJ" and token.pos_ != "ADP" and token.pos_ != "VERB"]
+        verbs = [token.lemma_ for token in doc if token.pos_ == 'VERB']
+        nouns = [token.text for token in doc if token.is_stop != True and token.is_punct != True and token.pos_ == "NOUN"]
+
+        word_freq = Counter(words)
+        common_words = word_freq.most_common(10)
+
+        verb_freq = Counter(verbs)
+        common_verbs = verb_freq.most_common(10)
+
+        noun_freq = Counter(nouns)
+        common_nouns = noun_freq.most_common(10)
+
+        commons = list(set(common_nouns).union(set(common_words)).union(set(common_verbs)))
+
+        return [common[0].lower() for common in commons]
+
+    def __extract_words(self,text=None,title=None):
+        '''
+        Nos dan la noticia y sacamos las palabras importantes para buscar las demas noticias con spacy
+        :param text: Cuerpo de una noticia
+        :param text: Titulo de una noticia
+        :return words: devolvemos palabras mas importantes de la noticia
+        '''
+
+        words = set()
+        if text:
+            doc = self.__nlp(text)
+            words_text = self.__get_words(doc)
+            words.update(words_text)
+        if title:
+            doc = self.__nlp(title)
+            words_title = self.__get_words(doc)
+            words.update(words_title)
+
+        return list(words)
+
+    def search_news_by_url(self, url):
+        '''
+        Extraemos datos de la url, guardamos en resultados. Procesamos la noticia,
+        para despues extraer las palabras mas comunes a buscar en los otros periodicos
+
+        :param url: url inicial que procesaremos y de la que sacaremos las palabras mas comunes para buscar en los siguientes periodicos
+        '''
+
+        nwp = self.__extract_newspaper(url)
+        css = self.__periodicos.pop(nwp)
+        soup_new, text, title = self.__process(url, css)
+        words = self.__extract_words(text, title)
+        score = self.__search_score(text, title, words)
+        new = Noticia(title=title, text=text, url=url, score=score)
+        self.__results.append(new)
+        self.search_news_by_words(words)
+
+        return (self.__results,words)
+
+    def search_news_by_words(self,words):
         ''' Cogemos un mapa de periodicos con las clases que hay que buscar,
         recorremos todos los link buscando las palabras en estos, y los que las contengan,
         nos recorremos la noticia y la recogemos. Por ultimo damos por defecto la que mas
         palabras contenga de las buscadas. Si no es esta doy la opción de escoger una de las otras.
         Devolvemos una lista con todos los objetos Noticia recolectados'''
-        end_news = []
-        for url,css_class in self.__periodicos.items():
-            soup = self.__scraper(url)
-            news = []
-            urlsScrapeadas = set()
-            tags_filtrados = [a for a in soup.find_all('a') if a.get('href')]
 
-            for a in tags_filtrados:
-                    urlfixed = self.__fix_url(url,str(a.get('href').replace(" ","")))
-                    if url in urlfixed and not urlfixed in urlsScrapeadas and any(word.lower() in str(a).lower() for word in words):
-                        urlsScrapeadas.add(urlfixed)
-                        soup_new = self.__scraper(urlfixed)
-                        text= self.__search_text(soup_new,css_class)
-                        title = self.__search_title(soup_new)
-                        if text:
-                            score = self.__search_score(text,title,words)
-                            if score > 0:
-                                new = Noticia()
-                                new.title = title
-                                new.text = text
-                                new.url = urlfixed
-                                new.score = score
-                                news.append(new)
-            if len(news) != 0:
-                new = Noticia()
-                try:
-                    import operator
-                except ImportError:
-                    score_field = lambda x: x.score
+        for url,css_class in self.__periodicos.items():
+            try:
+
+                soup = self.__scraper(url)
+                news = []
+                urlsScrapeadas = set()
+                tagsFiltered = [a for a in soup.find_all('a') if a.get('href')]
+                for a in tagsFiltered:
+                        urlfixed = self.__fix_url(url,str(a.get('href').replace(" ","")))
+                        palabras_titulo = self.__extract_words(title=str(a).lower())
+
+                        if url in urlfixed and not urlfixed in urlsScrapeadas and any(word.lower() in palabras_titulo for word in words):
+                            urlsScrapeadas.add(urlfixed)
+                            soup_new,text,title = self.__process(urlfixed,css_class)
+
+                            if text:
+                                score = self.__search_score(text,title,words)
+                                if score > 0:
+                                    new = Noticia(title=title,text=text,url=urlfixed,score=score)
+                                    news.append(new)
+                if len(news) != 0:
+                    news.sort(key=lambda x: x.score, reverse=True)
+                    new = news[0]
+
+                    respuesta = str(input(f'[+] ¿Es \'{new.title}\' con url {new.url} la noticia? S/N: '))
+                    if respuesta.lower() == 's':
+                        self.__results.append(new)
+                    else:
+                        n = self.__select_new(news)
+                        if n != -1 and n < len(news):
+                            self.__results.append(news[n])
                 else:
-                    score_field = operator.attrgetter("score")
-                news.sort(key=score_field, reverse=True)
-                new = news[0]
-                respuesta = str(input(f'[+] ¿Es \'{new.title}\' con url {new.url} la noticia? S/N: '))
-                if respuesta.lower() == 's':
-                    end_news.append(new)
-                else:
-                    n = self.__select_new(news)
-                    if n != -1 and n < len(news):
-                        end_news.append(news[n])
+                    print(f'[-] No hay noticias con las palabras buscadas en {url}')
+            except Exception:
+                print(f'Ha fallado algo en {urlfixed}, te devuelvo resultados hasta ahora, seguimos')
+
+        return self.__results
+
+    def process_results(self):
+        '''
+        Recogemos todos los textos de los resultados, y ponemos a string vacio
+        los periodicos que no contuvieran la noticia. Luego aplicamos tf-idf
+        para transformar los textos a una matriz de valores interpretable por
+        la operacion coseno de similaridad. Por último a esto aplicamos
+        OneClassSVM para clasificar los nuevos textos.
+        :return similarity: se devuelva la similaridad de los textos recien capturados
+        '''
+        noticias = []
+        for periodico in self.__periodicos.keys():
+            nombre_periodico = urlparse(periodico).netloc
+            if any(nombre_periodico in x.url for x in self.__results):
+                noticia = next(item for item in self.__results if nombre_periodico in item.url)
+                noticias.append(f"{noticia.title}\n{noticia.text}")
             else:
-                print(f'[-] No hay noticias con las palabras buscadas en {url}')
-        return end_news
+                noticias.append('')
+
+        vect = TfidfVectorizer()
+        tfidf = vect.fit_transform(noticias)
+        similarity = cosine_similarity(tfidf)
+        return similarity
+        # all_similarities = conf.get_similarities()
+        #
+        # clf = svm.OneClassSVM(nu=0.3, gamma='scale')
+        # clf.fit(all_similarities)
+        # return clf.predict(similarity)

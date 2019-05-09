@@ -1,45 +1,58 @@
 from periodicos import Periodicos
-from config import Config
+from config import DB
 from pymongo import MongoClient
-import argparse, datetime
+import argparse, datetime,sys
+from sklearn.metrics.pairwise import cosine_similarity
+from sklearn import svm
+from sklearn.feature_extraction.text import TfidfVectorizer
+import numpy as np
 
-conf = Config()
-client = MongoClient(username=conf.user, password= conf.password, host=conf.direction, port=conf.port)
+conf = DB()
 
-def guardarEnBBDD(noticias,palabras):
-
-    # Creamos el diccionario (json) que introduciremos en la base de datos
-    global client
-    # Creamos la conexion a la base de datos y la coleccion que utilizaremos e insertamos
-    db = client.Noticias
-    noticia = db.noticia
-    if not noticias:
-        print('No hay ninguna noticia a guardar')
-    else:
-        post_ids = noticia.insert_many([{"url": noticia.url,
-                                         "title": noticia.title,
-                                         "text": noticia.text,
-                                         "date": datetime.datetime.utcnow(),
-                                         "words": ",".join(palabras)} for noticia in noticias]).inserted_ids
-        print(f'Insertadas noticias con ids {",".join([str(post_id) for post_id in post_ids])}')
-        print('fin')
-
-def analizarTextos(palabras):
-    # Por cada periodico elegimos una noticia y recopilamos en base de datos
+def analizarTextos(args):
+    '''
+    Si es una lista de palabras, buscamos pòr palabras, si no por urls y guardamos en bbdd
+    :param args: Lista de palabras, o una url (String)
+    '''
+    global conf
     p = Periodicos()
-    noticias = p.search_news(palabras)
-    guardarEnBBDD(noticias, palabras)
+
+    if type(args) == list:
+        noticias = p.search_news_by_words(args)
+        conf.save(noticias, args)
+        similarities = p.process_results()
+        conf.save_similarities(similarities,args)
+    else:
+        noticias,palabras = p.search_news_by_url(url)
+        conf.save(noticias, palabras)
+        similarities = p.process_results()
+        conf.save_similarities(similarities, palabras)
+
+
+
 
 def parseArg():
-    # Recogemos argumentos
+    '''
+    Dos modos para recoger argumentos:
+    - Recogemos palabras a buscar
+    - Recogemos url de la que extraeremos la info para buscar las demas
+    :return uno de los dos modos:
+    '''
     parser = argparse.ArgumentParser()
     parser.add_argument('-w','--words', help='Words to search')
+    parser.add_argument('-u','--url', help='URL to search for')
     args = parser.parse_args()
-    return args.words.lower().split(",")
+    if args.words:
+        return args.words.lower().split(",")
+    elif args.url:
+        return args.url
+    else:
+        parser.print_help()
+        sys.exit(-1)
 
 def main():
-    palabrasaBuscar = parseArg()
-    analizarTextos(palabrasaBuscar)
+    args = parseArg()
+    analizarTextos(args)
 
 if __name__ == '__main__':
     main()
