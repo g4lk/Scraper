@@ -50,14 +50,12 @@ class Periodicos():
                 }
 
         self.__results = []
-        
-
         self.__nlp = spacy.load('es_core_news_md')
 
     def load_newspapers(self):
         ''' Por si se quiere el diccionario de periodico-clase creado '''
 
-        return self.__periodicos
+        return list(self.__periodicos.keys())
 
     def __fix_url(self,url, href):
         ''' Parser de urls '''
@@ -277,8 +275,14 @@ class Periodicos():
         tfidf = vect.fit_transform(noticias)
         similarity = cosine_similarity(tfidf)
         return similarity
-        # all_similarities = conf.get_similarities()
-        #
-        # clf = svm.OneClassSVM(nu=0.3, gamma='scale')
-        # clf.fit(all_similarities)
-        # return clf.predict(similarity)
+
+    # def show(self,similarity):
+    #     all_similarities = self.__db_con.get_similarities()
+    #
+    #     clf = svm.OneClassSVM(nu=0.3, gamma='scale')
+    #     clf.fit(all_similarities)
+    #     y_pred_train = clf.predict(all_similarities)
+    #     y_pred_test = clf.predict(similarity)
+    #     noticias_out_train = y_pred_train[y_pred_train == -1].size
+    #     noticias_out_test = y_pred_test[y_pred_test == -1].size
+

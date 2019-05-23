@@ -1,7 +1,7 @@
 from pymongo import MongoClient
 
 class DB():
-    def __init__(self, user='URJCReadWrite',password='UniversidadReyJuanCarlos2019', direction='127.0.0.1', port=27017 ):
+    def __init__(self, user='xxxx',password='xxxx', direction='127.0.0.1', port=27017 ):
         self.user = user
         self.password = password
         self.direction = direction
@@ -23,7 +23,7 @@ class DB():
                                              "words": ",".join(palabras)} for noticia in noticias]).inserted_ids
             print(f'Insertadas noticias con ids {",".join([str(post_id) for post_id in post_ids])}')
 
-    def save_similarities(self,similaridades, palabras):
+    def save_similarities(self,similaridades, palabras, one_class):
 
         db = self.client.Noticias
         noticias_procesadas = db.similaridades_noticias
@@ -31,13 +31,14 @@ class DB():
             print('No hay ninguna similaridad a guardar')
         else:
             post_id = noticia.insert_one([{"words": ",".join(palabras),
-                                             "similarities": similaridades}]).inserted_id
+                                             "similarities": similaridades,
+                                           "oneClass": one_class}]).inserted_id
             print(f'Insertadas similaridad con id {post_id}')
 
     def get_all(self):
         db = self.client.Noticias
         noticia = db.noticia
-        all_news = noticia.find({})
+        all_news = noticia.find()
         return [new for new in all_news]
 
     def get_similarities(self):
@@ -49,4 +50,10 @@ class DB():
             for one_sim in doc_similarities['similarities']:
                 ret_sim.append(one_sim)
         return ret_sim
+
+    def get_one_class(self):
+        db = self.client.Noticias
+        similarity = db.similaridades_noticias
+        all_similarities = similarity.find()
+        return [one_class['oneClass'] for one_class in all_similarities]
 
