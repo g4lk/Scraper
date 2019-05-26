@@ -1,4 +1,5 @@
 from pymongo import MongoClient
+import datetime
 
 class DB():
     def __init__(self, user='xxxx',password='xxxx', direction='127.0.0.1', port=27017 ):
@@ -19,7 +20,7 @@ class DB():
             post_ids = noticia.insert_many([{"url": noticia.url,
                                              "title": noticia.title,
                                              "text": noticia.text,
-                                             "date": datetime.datetime.utcnow(),
+                                             "date": datetime.datetime.utcnow().replace(second=0,microsecond=0),
                                              "words": ",".join(palabras)} for noticia in noticias]).inserted_ids
             print(f'Insertadas noticias con ids {",".join([str(post_id) for post_id in post_ids])}')
 
@@ -27,13 +28,13 @@ class DB():
 
         db = self.client.Noticias
         noticias_procesadas = db.similaridades_noticias
-        if not similaridades:
+        if similaridades is None:
             print('No hay ninguna similaridad a guardar')
         else:
-            post_id = noticia.insert_one([{"words": ",".join(palabras),
-                                             "similarities": similaridades,
-                                           "oneClass": one_class}]).inserted_id
-            print(f'Insertadas similaridad con id {post_id}')
+            post_id = noticias_procesadas.insert_one({"words": ",".join(palabras),
+                                                      "similarities": similaridades.tolist(),
+                                                      "oneClass": one_class.tolist()}).inserted_id
+            print(f'Insertada similaridad con id {post_id}')
 
     def get_all(self):
         db = self.client.Noticias
