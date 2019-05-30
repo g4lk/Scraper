@@ -1,11 +1,13 @@
 from bs4 import BeautifulSoup
-import ssl, urllib,os,re,requests,sys,spacy
+import ssl, urllib,os,re,requests,sys,spacy,threading
 from urllib.parse import urlparse
 from color import Color
 from collections import Counter
 from config import DB
+from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn import svm
+
 
 class Noticia():
     ''' Datos necesarios para guardar en bbdd mas score para filtro'''
@@ -21,6 +23,7 @@ class Periodicos():
     def __init__(self):
         self.__colores = Color()
         self.__db_con = DB()
+        self.__lock = threading.Lock()
         self.__periodicos = {   "https://www.elnacional.cat/es":"article-body",
                                 "https://www.elmundo.es/":"ue-l-article__body ue-c-article__body",
                                 "https://elpais.com/":"articulo-cuerpo",
@@ -49,8 +52,9 @@ class Periodicos():
                                 "https://www.lavozdegalicia.es/": "text"
                 }
 
+
+        #self.__nlp = spacy.load('es_core_news_sm')
         self.__results = []
-        self.__nlp = spacy.load('es_core_news_md')
 
     def load_newspapers(self):
         ''' Por si se quiere el diccionario de periodico-clase creado '''
@@ -208,60 +212,89 @@ class Periodicos():
 
         return (self.__results,words)
 
-    def search_news_by_words(self,words):
-        ''' Cogemos un mapa de periodicos con las clases que hay que buscar,
-        recorremos todos los link buscando las palabras en estos, y los que las contengan,
+    def __worker(self,words,url,css_class,auto):
+        '''
+        Recorremos todos los link buscando las palabras en estos, y los que las contengan,
         nos recorremos la noticia y la recogemos. Por ultimo damos por defecto la que mas
         palabras contenga de las buscadas. Si no es esta doy la opción de escoger una de las otras.
-        Devolvemos una lista con todos los objetos Noticia recolectados'''
+        :param words: palabras a buscar
+        :param url: url de la que tiramos
+        :param css_class: clase de html
+        :return:
+        '''
 
-        for url,css_class in self.__periodicos.items():
+
+        soup = self.__scraper(url)
+        news = []
+        urlsScrapeadas = set()
+        tagsFiltered = [a for a in soup.find_all('a') if a.get('href')]
+        for a in tagsFiltered:
             try:
+                urlfixed = self.__fix_url(url,str(a.get('href').replace(" ","")))
+                #palabras_titulo = self.__extract_words(title=str(a).lower())
 
-                soup = self.__scraper(url)
-                news = []
-                urlsScrapeadas = set()
-                tagsFiltered = [a for a in soup.find_all('a') if a.get('href')]
-                for a in tagsFiltered:
-                        urlfixed = self.__fix_url(url,str(a.get('href').replace(" ","")))
-                        palabras_titulo = self.__extract_words(title=str(a).lower())
+                if url in urlfixed and not urlfixed in urlsScrapeadas and any(word.lower() in str(a).lower() for word in words):
+                    urlsScrapeadas.add(urlfixed)
+                    soup_new,text,title = self.__process(urlfixed,css_class)
 
-                        if url in urlfixed and not urlfixed in urlsScrapeadas and any(word.lower() in palabras_titulo for word in words):
-                            urlsScrapeadas.add(urlfixed)
-                            soup_new,text,title = self.__process(urlfixed,css_class)
-
-                            if text:
-                                score = self.__search_score(text,title,words)
-                                if score > 0:
-                                    new = Noticia(title=title,text=text,url=urlfixed,score=score)
-                                    news.append(new)
-                if len(news) != 0:
-                    news.sort(key=lambda x: x.score, reverse=True)
-                    new = news[0]
-
-                    respuesta = str(input(f'[+] ¿Es \'{new.title}\' con url {new.url} la noticia? S/N: '))
-                    if respuesta.lower() == 's':
-                        self.__results.append(new)
-                    else:
-                        n = self.__select_new(news)
-                        if n != -1 and n < len(news):
-                            self.__results.append(news[n])
-                else:
-                    print(f'[-] No hay noticias con las palabras buscadas en {url}')
+                    if text:
+                        score = self.__search_score(text,title,words)
+                        if score > 0:
+                            new = Noticia(title=title,text=text,url=urlfixed,score=score)
+                            news.append(new)
             except Exception:
-                print(f'Ha fallado algo en {urlfixed}, te devuelvo resultados hasta ahora, seguimos')
+                print(f'Ha fallado algo en {urlfixed}')
+
+
+        self.__select(news,url,auto)
+
+    def __select(self,news,url,auto):
+        '''
+        Hacemos un metodo seguro a multithreading para eleccion de noticias.
+        '''
+
+        self.__lock.acquire()
+        if len(news) != 0:
+            news.sort(key=lambda x: x.score, reverse=True)
+            new = news[0]
+            if auto:
+                self.__results.append(new)
+            else:
+                respuesta = str(input(f'[+] ¿Es \'{new.title}\' con url {new.url} la noticia? S/N: '))
+                if respuesta.lower() == 's':
+                    self.__results.append(new)
+                else:
+                    n = self.__select_new(news)
+                    if n != -1 and n < len(news):
+                        self.__results.append(news[n])
+        else:
+            print(f'[-] No hay noticias con las palabras buscadas en {url}')
+        self.__lock.release()
+
+
+    def search_news_by_words(self,words,auto):
+        '''
+        Cogemos un mapa de periodicos con las clases que hay que buscar,
+        y llamamos a los threads para que busquen las noticias.
+        Devolvemos una lista con todos los objetos Noticia recolectados
+        '''
+        threads = []
+        for url,css_class in self.__periodicos.items():
+            threads.append(threading.Thread(target=self.__worker, args=(words,url,css_class,auto)))
+            threads[-1].start()
+
+        # Esperamos a que todos los thread hayan terminado
+        for thread in threads:
+            thread.join()
 
         return self.__results
 
-    def process_results(self):
+    def __sort_results(self):
         '''
-        Recogemos todos los textos de los resultados, y ponemos a string vacio
-        los periodicos que no contuvieran la noticia. Luego aplicamos tf-idf
-        para transformar los textos a una matriz de valores interpretable por
-        la operacion coseno de similaridad. Por último a esto aplicamos
-        OneClassSVM para clasificar los nuevos textos.
-        :return similarity: se devuelva la similaridad de los textos recien capturados
+        Recibe las noticias sin ordenar y las ordena
+        :return: Titulo y texto de cada noticia, en el orden dado de los periodicos
         '''
+
         noticias = []
         for periodico in self.__periodicos.keys():
             nombre_periodico = urlparse(periodico).netloc
@@ -271,18 +304,26 @@ class Periodicos():
             else:
                 noticias.append('')
 
+        return noticias
+
+    def process_results(self):
+        '''
+        Ordenamos las noticias recogidas, luego aplicamos tf-idf
+        para transformar los textos a una matriz de valores interpretable por
+        la operacion coseno de similaridad. Por último a esto aplicamos
+        OneClassSVM para clasificar los nuevos textos.
+        :return similarity: se devuelva la similaridad de los textos recien capturados
+        :return one_class: se devuelve la clasificación aplicada por el algoritmo
+        '''
+
+        noticias = self.__sort_results()
+
         vect = TfidfVectorizer()
         tfidf = vect.fit_transform(noticias)
         similarity = cosine_similarity(tfidf)
-        return similarity
-
-    # def show(self,similarity):
-    #     all_similarities = self.__db_con.get_similarities()
-    #
-    #     clf = svm.OneClassSVM(nu=0.3, gamma='scale')
-    #     clf.fit(all_similarities)
-    #     y_pred_train = clf.predict(all_similarities)
-    #     y_pred_test = clf.predict(similarity)
-    #     noticias_out_train = y_pred_train[y_pred_train == -1].size
-    #     noticias_out_test = y_pred_test[y_pred_test == -1].size
+        all_similarities = self.__db_con.get_similarities()
+        clf = svm.OneClassSVM(nu=0.5, gamma='scale')
+        clf.fit(all_similarities)
+        one_class = clf.predict(similarity)
+        return similarity,one_class
 

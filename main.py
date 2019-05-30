@@ -2,16 +2,13 @@ from periodicos import Periodicos
 from config import DB
 from pymongo import MongoClient
 import argparse, datetime,sys
-from sklearn.metrics.pairwise import cosine_similarity
-from sklearn import svm
-from sklearn.feature_extraction.text import TfidfVectorizer
 import numpy as np
 import matplotlib.pyplot as plt
 
 conf = DB()
 p = Periodicos()
 
-def analizar_textos(args):
+def analizar_textos(args,auto):
     '''
     Si es una lista de palabras, buscamos pòr palabras, si no por urls y guardamos en bbdd
     :param args: Lista de palabras, o una url (String)
@@ -21,17 +18,17 @@ def analizar_textos(args):
     global p
 
     if type(args) == list:
-        noticias = p.search_news_by_words(args)
+        noticias = p.search_news_by_words(args,auto)
         conf.save(noticias, args)
-        similarities = p.process_results()
-        conf.save_similarities(similarities,args)
+        similarity,one_class = p.process_results()
+        conf.save_similarities(similarity,args,one_class)
     else:
-        noticias,palabras = p.search_news_by_url(url)
+        noticias,palabras = p.search_news_by_url(url,auto)
         conf.save(noticias, palabras)
-        similarities = p.process_results()
-        conf.save_similarities(similarities, palabras)
+        similary,one_class = p.process_results()
+        conf.save_similarities(similarity, palabras,one_class)
 
-def create_array(one_class_results,number):
+def crear_array(one_class_results,number):
     '''
     Creamos el array resultado que se mostrará en la gráfica
     :param one_class_results: Resultados de aplicar one class a las noticias
@@ -51,7 +48,7 @@ def create_array(one_class_results,number):
 
     return array_final
 
-def create_plt(fig_number, range_min, range_max, labels, one_class_results):
+def line_chart(fig_number, range_min, range_max, labels, one_class_results):
     '''
     Creamos las ventanas con 5 periodicos por cada una y mostramos los resultados del análisis de las noticias.
     :param fig_number: Número de ventana
@@ -67,7 +64,7 @@ def create_plt(fig_number, range_min, range_max, labels, one_class_results):
 
     array_result = []
     for i in range(range_min, range_max):
-        array_result.append(create_array(one_class_results, i))
+        array_result.append(crear_array(one_class_results, i))
 
     numero = 0
     for result in array_result:
@@ -80,8 +77,30 @@ def create_plt(fig_number, range_min, range_max, labels, one_class_results):
     plt.legend(loc='upper left')
     fig = plt.gcf()
     fig.canvas.set_window_title('Estadisticas de periodicos')
-    mng = plt.get_current_fig_manager()
-    mng.resize(*mng.window.maxsize())
+    if 'linux' in sys.platform:
+        mng = plt.get_current_fig_manager()
+        mng.resize(*mng.window.maxsize())
+
+def bar_chart(fig_number, mas_anomalos, menos_anomalos):
+    plt.figure(fig_number)
+
+    plt.subplot(2, 1, 1)
+    plt.bar([i for i in range(0, len(mas_anomalos) )], [elem[0] for elem in mas_anomalos], align='center', alpha=0.5)
+    plt.xticks([i for i in range(0, len(mas_anomalos) )], [elem[1] for elem in mas_anomalos])
+    plt.title('Periódicos con número de noticias anómalas más alta')
+    plt.ylabel('Numero de noticias anómalas en el periódico')
+
+    plt.subplot(2, 1, 2)
+    plt.bar([i for i in range(0, len(menos_anomalos))], [elem[0] for elem in menos_anomalos], align='center', alpha=0.5)
+    plt.xticks([i for i in range(0, len(menos_anomalos))], [elem[1] for elem in menos_anomalos])
+    plt.title('Periódicos con número de noticias anómalas más baja')
+    plt.ylabel('Numero de noticias anómalas en el periódico')
+
+    fig = plt.gcf()
+    fig.canvas.set_window_title('Grafico de barras resumen')
+    if 'linux' in sys.platform:
+        mng = plt.get_current_fig_manager()
+        mng.resize(*mng.window.maxsize())
 
 def show():
     '''
@@ -93,11 +112,17 @@ def show():
     periodicos = p.load_newspapers()
     one_class = conf.get_one_class()
 
-    create_plt(1,  0,   5, periodicos[:5]   , one_class)
-    create_plt(2,  5,  10, periodicos[5:10] , one_class)
-    create_plt(3, 10,  15, periodicos[10:15], one_class)
-    create_plt(4, 15,  20, periodicos[15:20], one_class)
-    create_plt(5, 20,  26, periodicos[20:]  , one_class)
+    line_chart(1,  0,   5, periodicos[:5]   , one_class)
+    line_chart(2,  5,  10, periodicos[5:10] , one_class)
+    line_chart(3, 10,  15, periodicos[10:15], one_class)
+    line_chart(4, 15,  20, periodicos[15:20], one_class)
+    line_chart(5, 20,  26, periodicos[20:]  , one_class)
+
+    # Cogemos los 5 periodicos con valores más altos/bajos de anomalia para crear el chart
+    mas_anomalos = sorted([(crear_array(one_class,i)[-1],periodicos[i]) for i in range(0,len(periodicos)-1)], reverse=True)[:5]
+    menos_anomalos = sorted([(crear_array(one_class,i)[-1],periodicos[i]) for i in range(0,len(periodicos)-1)])[:5]
+
+    bar_chart(6,mas_anomalos, menos_anomalos)
 
     plt.show()
 
@@ -112,14 +137,21 @@ def main():
     '''
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('-w', '--words', help='Words to search')
-    parser.add_argument('-u', '--url', help='URL to search for')
-    parser.add_argument('-s', '--show', help='Show results')
+    parser.add_argument('-w', '--words', help='Palabras a buscar')
+    parser.add_argument('-u', '--url', help='URL a buscar')
+    parser.add_argument('-s', '--show', help='Mostrar gráficas de lo obtenido hasta el momento',action='store_true')
+    parser.add_argument('-a', '--auto', help='Recogida automática (beta)',action='store_true')
     args = parser.parse_args()
     if args.words:
-        analizar_textos(args.words.lower().split(","))
+        if args.auto:
+            analizar_textos(args.words.lower().split(","),True)
+        else:
+            analizar_textos(args.words.lower().split(","),False)
     elif args.url:
-        analizar_textos(args.url)
+        if args.auto:
+            analizar_textos(args.url, True)
+        else:
+            analizar_textos(args.url, False)
     else:
         parser.print_help()
         sys.exit(-1)
