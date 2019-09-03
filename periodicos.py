@@ -2,6 +2,7 @@ from bs4 import BeautifulSoup
 import ssl, urllib,os,re,requests,sys,spacy,threading
 from urllib.parse import urlparse
 from color import Color
+from language import Language
 from collections import Counter
 from config import DB
 from sklearn.feature_extraction.text import TfidfVectorizer
@@ -20,41 +21,23 @@ class Noticia():
 
 
 class Periodicos():
-    def __init__(self):
+    def __init__(self, db_con = None,lang = 'ES'):
         self.__colores = Color()
-        self.__db_con = DB()
+        self.__db_con = db_con
+        self.__lang = lang
+        self.__phrases = Language(lang).getPhrases()
         self.__lock = threading.Lock()
-        self.__periodicos = {   "https://www.elnacional.cat/es":"article-body",
-                                "https://www.elmundo.es/":"ue-l-article__body ue-c-article__body",
-                                "https://elpais.com/":"articulo-cuerpo",
-                                "https://www.lavanguardia.com/":"story-leaf-txt-p",
-                                "https://www.elperiodico.com/es/":"ep-detail-body",
-                                "https://www.elconfidencial.com/":"news-body-center cms-format",
-                                "https://www.eldiario.es/":"mce-body mce no-sticky-adv-socios",
-                                "https://www.elindependiente.com/":"article-body p402_premium",
-                                "https://www.elespanol.com/":"article-body__content",
-                                "https://www.elimparcial.es/":"texto",
-                                "https://www.elplural.com/":"body-content",
-                                "https://www.lainformacion.com/":"content-modules",
-                                "https://www.larazon.es/":"paragraph",
-                                "https://www.esdiario.com/":"text CuerpoNoticia",
-                                "https://www.libertaddigital.com/":"texto principal",
-                                "https://okdiario.com/": "entry-content",
-                                "https://www.periodistadigital.com/": "text-block",
-                                "https://www.abc.es/": "contenido-articulo",
-                                "https://www.20minutos.es/": "gtm-article-text",
-                                "https://www.diariovasco.com/": "voc-detail voc-detail-grid",
-                                "https://www.farodevigo.es/": "cuerpo_noticia",
-                                "https://www.heraldo.es/": "content-modules",
-                                "https://www.lasprovincias.es/": "voc-detail voc-detail-grid",
-                                "https://www.diariosur.es/": "voc-detail voc-detail-grid",
-                                "https://www.elnortedecastilla.es/": "voc-detail voc-detail-grid",
-                                "https://www.lavozdegalicia.es/": "text"
-                }
-
-
-        #self.__nlp = spacy.load('es_core_news_sm')
+        self.__periodicos = self.__getDict(lang)
         self.__results = []
+
+    def __getDict(self,lang):
+        dict = {}
+        with open(f'./archivos/news-{lang}.txt'.lower()) as file:
+            lines = file.read().splitlines()
+        for line in lines:
+            valores = line.split('=')
+            dict[valores[0]] = valores[1]
+        return dict
 
     def load_newspapers(self):
         ''' Por si se quiere el diccionario de periodico-clase creado '''
@@ -131,7 +114,7 @@ class Periodicos():
 
         for index,new in enumerate(news):
             print(f'\t{self.__colores.BLUE}{index}: {new.title} - {new.url}{self.__colores.END}')
-        inp = int(input(f'{self.__colores.BOLD}Selecciona un número de los anteriores o -1 si no quieres ninguno: {self.__colores.END}'))
+        inp = int(input(f'{self.__colores.BOLD}{self.__phrases[0]}{self.__colores.END}'))
         return inp
 
     def __process(self,url,css):
@@ -182,12 +165,17 @@ class Periodicos():
         '''
 
         words = set()
+        if self.__lang.lower() == 'es':
+            nlp = spacy.load('es_core_news_sm')
+        else:
+            nlp = spacy.load('es_core_news_md')
+
         if text:
-            doc = self.__nlp(text)
+            doc = nlp(text)
             words_text = self.__get_words(doc)
             words.update(words_text)
         if title:
-            doc = self.__nlp(title)
+            doc = nlp(title)
             words_title = self.__get_words(doc)
             words.update(words_title)
 
@@ -200,7 +188,6 @@ class Periodicos():
 
         :param url: url inicial que procesaremos y de la que sacaremos las palabras mas comunes para buscar en los siguientes periodicos
         '''
-
         nwp = self.__extract_newspaper(url)
         css = self.__periodicos.pop(nwp)
         soup_new, text, title = self.__process(url, css)
@@ -243,7 +230,7 @@ class Periodicos():
                             new = Noticia(title=title,text=text,url=urlfixed,score=score)
                             news.append(new)
             except Exception:
-                print(f'Ha fallado algo en {urlfixed}')
+                pass
 
 
         self.__select(news,url,auto)
@@ -260,7 +247,7 @@ class Periodicos():
             if auto:
                 self.__results.append(new)
             else:
-                respuesta = str(input(f'[+] ¿Es \'{new.title}\' con url {new.url} la noticia? S/N: '))
+                respuesta = str(input(f'{self.__phrases[2]} \'{new.title}\' - \'{new.url}\'\n{self.__phrases[3]}'))
                 if respuesta.lower() == 's':
                     self.__results.append(new)
                 else:
@@ -268,7 +255,7 @@ class Periodicos():
                     if n != -1 and n < len(news):
                         self.__results.append(news[n])
         else:
-            print(f'[-] No hay noticias con las palabras buscadas en {url}')
+            print(f'{self.__phrases[4]} {url}')
         self.__lock.release()
 
 
@@ -321,9 +308,12 @@ class Periodicos():
         vect = TfidfVectorizer()
         tfidf = vect.fit_transform(noticias)
         similarity = cosine_similarity(tfidf)
-        all_similarities = self.__db_con.get_similarities()
-        clf = svm.OneClassSVM(nu=0.5, gamma='scale')
-        clf.fit(all_similarities)
-        one_class = clf.predict(similarity)
-        return similarity,one_class
+        try:
+            all_similarities = self.__db_con.get_similarities()
+            clf = svm.OneClassSVM(nu=0.5, gamma='scale')
+            clf.fit(all_similarities)
+            one_class = clf.predict(similarity)
+            return similarity,one_class
+        except Exception:
+            print(self.__phrases[5])
 

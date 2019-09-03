@@ -2,11 +2,12 @@ from periodicos import Periodicos
 from config import DB
 from pymongo import MongoClient
 import argparse, datetime,sys
-import numpy as np
 import matplotlib.pyplot as plt
+import warnings
 
+warnings.filterwarnings("ignore")
 conf = DB()
-p = Periodicos()
+p = Periodicos(db_con=conf)
 
 def analizar_textos(args,auto):
     '''
@@ -21,12 +22,14 @@ def analizar_textos(args,auto):
         noticias = p.search_news_by_words(args,auto)
         conf.save(noticias, args)
         similarity,one_class = p.process_results()
-        conf.save_similarities(similarity,args,one_class)
+        if similarity is not None and one_class is not None:
+            conf.save_similarities(similarity,args,one_class)
     else:
         noticias,palabras = p.search_news_by_url(url,auto)
         conf.save(noticias, palabras)
         similary,one_class = p.process_results()
-        conf.save_similarities(similarity, palabras,one_class)
+        if similarity is not None and one_class is not None:
+            conf.save_similarities(similarity, palabras,one_class)
 
 def crear_array(one_class_results,number):
     '''
@@ -153,11 +156,13 @@ def main():
         else:
             analizar_textos(args.url, False)
     else:
-        parser.print_help()
-        sys.exit(-1)
+        if args.show:
+            show()
+        else:
+            parser.print_help()
+            sys.exit(-1)
 
-    if args.show:
-        show()
+
 
 if __name__ == '__main__':
     main()

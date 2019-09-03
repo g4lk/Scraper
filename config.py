@@ -2,7 +2,7 @@ from pymongo import MongoClient
 import datetime
 
 class DB():
-    def __init__(self, user='xxxx',password='xxxx', direction='127.0.0.1', port=27017 ):
+    def __init__(self, user='URJCReadWrite',password='UniversidadReyJuanCarlos2019', direction='127.0.0.1', port=27017 ):
         self.user = user
         self.password = password
         self.direction = direction
