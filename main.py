@@ -11,7 +11,7 @@ p = Periodicos(db_con=conf)
 
 def analizar_textos(args,auto):
     '''
-    Si es una lista de palabras, buscamos pòr palabras, si no por urls y guardamos en bbdd
+    Si es una lista de palabras, buscamos por palabras, si no por urls y guardamos en bbdd
     :param args: Lista de palabras, o una url (String)
     '''
 
@@ -25,19 +25,13 @@ def analizar_textos(args,auto):
         if similarity is not None and one_class is not None:
             conf.save_similarities(similarity,args,one_class)
     else:
-        noticias,palabras = p.search_news_by_url(url,auto)
+        noticias,palabras = p.search_news_by_url(args)
         conf.save(noticias, palabras)
         similary,one_class = p.process_results()
         if similarity is not None and one_class is not None:
             conf.save_similarities(similarity, palabras,one_class)
 
 def crear_array(one_class_results,number):
-    '''
-    Creamos el array resultado que se mostrará en la gráfica
-    :param one_class_results: Resultados de aplicar one class a las noticias
-    :param number: posicion de los arrays que se escogerá (resultados de qué periódico)
-    :return: Array que indica la línea a mostrar de noticias anómalas del periodico (siempre creciente)
-    '''
 
     numero = 0
     array_final = []
@@ -52,17 +46,10 @@ def crear_array(one_class_results,number):
     return array_final
 
 def line_chart(fig_number, range_min, range_max, labels, one_class_results):
-    '''
-    Creamos las ventanas con 5 periodicos por cada una y mostramos los resultados del análisis de las noticias.
-    :param fig_number: Número de ventana
-    :param range_min: Número del periodico en la lista a mostrar mínimo
-    :param range_max: Número del periodico en la lista a mostrar máximo
-    :param labels: Nombre de cada periodico
-    :param one_class_results: Resultados de aplicar oneClassSVM a las noticias.
-    '''
+
 
     plt.figure(fig_number)
-    plt.xlabel('Noticias ordenadas cronológicamente por número ')
+    plt.xlabel('Noticias ordenadas cronologicamente por numero ')
     plt.ylabel('Numero de noticias anómalas en cada periódico')
 
     array_result = []
@@ -106,9 +93,7 @@ def bar_chart(fig_number, mas_anomalos, menos_anomalos):
         mng.resize(*mng.window.maxsize())
 
 def show():
-    '''
-    Cargamos los nombres de los periodicos, cogemos los resultados de aplicar oneClassSVM a las noticias, creamos las ventanas y mostramos
-    '''
+
 
     global conf
     global p

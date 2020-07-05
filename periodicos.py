@@ -195,7 +195,7 @@ class Periodicos():
         score = self.__search_score(text, title, words)
         new = Noticia(title=title, text=text, url=url, score=score)
         self.__results.append(new)
-        self.search_news_by_words(words)
+        self.search_news_by_words(words,False)
 
         return (self.__results,words)
 
